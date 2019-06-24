@@ -39,7 +39,7 @@ typedef struct RealTimeData
 	int16_t ang[3];
 }RealTimeData;
 
-//临时使用的数据栈  保存最近到来的一定长度的点
+//临时使用的数据栈  保存最近到来的一定数目的点
 typedef struct RawDataStack
 {
 	RealTimeData* Data;
@@ -56,11 +56,12 @@ typedef struct DataStack
 //中间保存的变量
 typedef struct TempStack
 {
-	char trend; //趋势
+	int8_t trend; //趋势
 	int32_t	IsolatedPointsNumber; //孤立点个数
 	int32_t Count1;
 	int32_t CycleLimit;
-	char hand;
+	float SimiLimit; //波形相似性下限
+	int8_t hand;
 
 	int32_t PeakLoc;
 	int32_t LastPeakLoc;
@@ -92,8 +93,9 @@ void printResult(RowResultStruct Result); //打印结果数据
 void PrintRealTimeData(RealTimeData OnPoint);
 
 //对数组的操作
-char sign(int16_t a);//判断数值正负号
+int8_t sign(int16_t a);//判断数值正负号
 float ComputeVar(int16_t* Array, int16_t length); //计算一个数组的方差
+float ComputeVar2(int16_t* Array, int16_t length); //计算一个数组的方差
 int16_t GetArrayMaxPLen(int16_t* Array, int16_t start, int16_t end); //统计两个波峰之间最长的正值
 int16_t GetArrayMax(int16_t* Array, int16_t Num); //求数组最大值
 int16_t GetArrayMean(int16_t* Array, int16_t len); //求数组的均值
