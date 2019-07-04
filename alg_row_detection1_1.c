@@ -8,16 +8,18 @@ RowResultStruct RowResult;	//Result
 DataStack Acc;
 DataStack Ang;
 
-//init parameter 
-//handside==1 left hand else right hand
+//init parameter
 void row_initial(bool handside)
 {
+	//parameter:
+	//handside:	hadside==true:left hand .else right hand
+
 	sample_num = 0;
 
 	temp.trend = -2;
 	temp.IsolatedPointsNumber = 0;
 	temp.Count1 = 0;
-	temp.CycleLimit = 75;
+	temp.CycleLimit = 65;
 	temp.SimiLimit = (float)(0.4);
 	temp.hand = (handside == true) ? 1 : -1;
 
@@ -59,231 +61,172 @@ void row_initial(bool handside)
 
 	return;
 }
-
 void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 {
-	RealTimeData OnPoint = { {acc_buf[0],acc_buf[1],acc_buf[2]},{gyro_buf[0],gyro_buf[1],gyro_buf[2]} };
 	sample_num = sample_num + 1;
 
+	// Update Real-Time Data
+	RealTimeData OnPoint = { {acc_buf[0],acc_buf[1],acc_buf[2]},{gyro_buf[0],gyro_buf[1],gyro_buf[2]} };
 	UpdateRawDataStack(OnPoint);  //Update raw Data
-	UpdateMainDataStack();
+	UpdateMainDataStack(); //Update Data (Filter) 
 
 	if (Acc.DataNum == 0) return;
 
 	int32_t Num = Acc.DataNum - 1;
-	float var = ComputeVar2(Acc.Data, Acc.DataNum); //Compute Similarity
-	//printf("%.2f\n", var);
-	if (var >= 300000 || var <= 8000)
+	float var = ComputeVar2(Acc.Data, Acc.DataNum); //Compute Var of Data
+	if (var > 300000 || var < 8000)
 	{
 		temp.IsolatedPointsNumber = 0;
 		temp.PeakLoc = 0;
-		updateTrend(Num);
+		RowResult.avgRowCountPerMinNow = 0;
+		UpdateTrend(Num);
 		return;
 	}
 
 	if (temp.trend == -2)
 	{
 		RowResult.avgRowCountPerMinNow = 0;
-	}
-	else if(checkValley(Num,sample_num)) //Check if the point is a trough
+	}		
+	else if(temp.trend == -1) //Check if the point is a trough
 	{
-		temp.ValleyLoc = sample_num - 1;
+		if(checkValley(Num,sample_num))
+			temp.ValleyLoc = sample_num - 1;
 	}
 	else if (temp.trend == 1 && Acc.Data[Num] < Acc.Data[Num - 1]) //Wave Peak
 	{
 		int16_t Peak = Acc.Data[Num - 1];
 		int16_t PPdis = sample_num - 1 - temp.LastPeakLoc; //Peak_Peak distance
-		int16_t PeakThresold;
+		float TempCycleTime = (float)(PPdis / 25.0);
+		float TempPaddleTime;
 
-		//if (temp.trend == -2)
-		//{
-		//	PeakThresold = 1000;
-		//}
-		//else
-		//{
-		//	PeakThresold = (int16_t)(MAX(GetArrayMean(temp.PeakValueStack, 3) * (float)exp(-PPdis / 80), 1000));
-		//}
-
-		PeakThresold = 0;
-		if (Peak >= PeakThresold && temp.ValleyLoc != 0)
+		int16_t PeakThresold;	
+		PeakThresold = 500;
+		
+		//PeakThresold = (int16_t)(MAX(GetArrayMean(temp.PeakValueStack, 3) * exp(-PPdis / 80.0)*0.8, 500)); //setting PeakThresold
+		if (Peak < PeakThresold || temp.ValleyLoc == 0 || sample_num - 1 - temp.ValleyLoc < 8)
 		{
-			float TempTime;
-			if (sample_num - 1 - temp.ValleyLoc >= 5)
+			UpdateTrend(Num);
+			return;
+		}
+
+		temp.PeakLoc = sample_num - 1;
+		float ResampleData[WAVELEN];
+		int16_t end = Num - 1;
+		int16_t start = end - (temp.PeakLoc - temp.LastPeakLoc);
+
+		UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
+		UpdatePeakStack(temp.PeakValueStack, Peak);
+
+		if ((PPdis >= 20 && PPdis <= temp.CycleLimit) || temp.LastPeakLoc == 0)
+		{
+			temp.IsolatedPointsNumber++;
+			if (temp.IsolatedPointsNumber > 3)
 			{
-				printf("PEAK == %d\n", Peak);
-				temp.PeakLoc = sample_num - 1;
-				if ((PPdis >= 20 && PPdis <= temp.CycleLimit) || temp.LastPeakLoc == 0)
+				UpdateTimeStack(temp.CycleTime, TempCycleTime);
+				RowResult.avgRowDuration = RowResult.avgRowDuration * temp.Count1 / (temp.Count1 + 1) + temp.CycleTime[2] / (temp.Count1 + 1);
+				
+				int16_t Pnum = GetArrayMaxPLen(Acc.Data, start, end);				
+				TempPaddleTime = (float)(Pnum / 25.0);
+				UpdateTimeStack(temp.PaddleTime, TempPaddleTime);
+				RowResult.avgPaddleTime = TempPaddleTime; //use the last temptime to compute paddletime
+
+				SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
+				for (int16_t i = 0; i < WAVELEN; i++)
 				{
-					temp.IsolatedPointsNumber++;
+					Wave[i] = (int16_t)(Wave[i] * temp.Count1 / (temp.Count1 + 1) + ResampleData[i] / (temp.Count1 + 1));
+				}
 
-					if (temp.IsolatedPointsNumber > 3)
+				temp.Count1++;
+				RowResult.rowCounts++;
+				RowResult.avgRowCountPerMin = (int16_t)(60 / RowResult.avgRowDuration + 0.5); //Final mean Freq
+				RowResult.avgRowCountPerMinNow = (int16_t)(60 / TempCycleTime + 0.5); // now On-Time Freq
+				RowResult.avgReturnPaddleTime = TempCycleTime - RowResult.avgPaddleTime; // The last return Paddle-Time
+
+				printf("%4.2f ", sample_num / 25.0);
+				printResult(RowResult);
+			}
+			else if (temp.IsolatedPointsNumber == 3)
+			{
+				UpdateTimeStack(temp.CycleTime, TempCycleTime);
+
+				int16_t Pnum = GetArrayMaxPLen(Acc.Data, start, end);
+				TempPaddleTime = (float)(Pnum / 25.0);
+				UpdateTimeStack(temp.PaddleTime, TempPaddleTime);
+
+				SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
+				for (int16_t i = 0; i < WAVELEN; i++)
+				{
+					Wave[i] = (int16_t)(Wave[i] * temp.Count1 / (temp.Count1 + 1) + ResampleData[i] / (temp.Count1 + 1));
+				}
+				for (int16_t i = 0; i < 3; i++)
+				{
+					if (i >= 1)
 					{
-						TempTime = (float)(PPdis / 25.0);
-						UpdateTimeStack(temp.CycleTime, TempTime);
-						RowResult.avgRowDuration = RowResult.avgRowDuration * temp.Count1 / (temp.Count1 + 1) + temp.CycleTime[2] / (temp.Count1 + 1);
-
-						int16_t end = Num - 1;
-						int16_t start = end - (temp.PeakLoc - temp.LastPeakLoc);
-						int16_t Pnum = GetArrayMaxPLen(Acc.Data, start, end);
-
-						TempTime = (float)(Pnum / 25.0);
-						UpdateTimeStack(temp.PaddleTime, TempTime);
-
-						//RowResult.avgPaddleTime = RowResult.avgPaddleTime * temp.Count1 / (temp.Count1 + 1) + TempTime / (temp.Count1 + 1); //use the all time to compute paddletime
-						RowResult.avgPaddleTime = TempTime; //use the last temptime to compute paddletime
-
-						float ResampleData[WAVELEN];
-						SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
-						for (int16_t i = 0; i < WAVELEN; i++)
-						{
-							Wave[i] = (int16_t)(Wave[i] * temp.Count1 / (temp.Count1 + 1) + ResampleData[i] / (temp.Count1 + 1));
-						}
-
+						RowResult.avgRowDuration = RowResult.avgRowDuration * temp.Count1 / (temp.Count1 + 1) + temp.CycleTime[i] / (temp.Count1 + 1);
+						RowResult.avgPaddleTime = RowResult.avgPaddleTime * temp.Count1 / (temp.Count1 + 1) + temp.PaddleTime[i] / (temp.Count1 + 1);
 						temp.Count1++;
-
-						RowResult.rowCounts++;
-						RowResult.avgRowCountPerMin = (int16_t)(60 / RowResult.avgRowDuration + 0.5); //Final mean Freq
-						RowResult.avgRowCountPerMinNow = (int16_t)(60 / (float)(PPdis / 25.0) + 0.5); // now On-Time Freq
-						RowResult.avgReturnPaddleTime = (float)(PPdis / 25.0) - RowResult.avgPaddleTime; // The last return Paddle-Time
-
-						temp.LastPeakLoc = temp.PeakLoc;
-						temp.PeakLoc = 0;
-						temp.ValleyLoc = 0;
-
-						printf("%4.2f ", sample_num / 25.0);
-						printResult(RowResult);
 					}
-					else if (temp.IsolatedPointsNumber == 3)
+					RowResult.rowCounts++;
+					RowResult.avgRowCountPerMin = (int16_t)(60 / RowResult.avgRowDuration + 0.5);
+					RowResult.avgReturnPaddleTime = RowResult.avgRowDuration - RowResult.avgPaddleTime;
+				}
+				RowResult.avgRowCountPerMinNow = (int16_t)(60 / ((temp.CycleTime[1] + temp.CycleTime[2]) / 2) + 0.5);
+
+				printf("%4.2f ", sample_num / 25.0);
+				printResult(RowResult);
+			}
+			else if (temp.IsolatedPointsNumber == 2)
+			{
+				SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
+
+				if (RowResult.rowCounts == 0)
+				{
+					for (int16_t i = 0; i < WAVELEN; i++)
 					{
-						TempTime = (float)(PPdis / 25.0);
-						UpdateTimeStack(temp.CycleTime, TempTime);
-						UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
-						UpdatePeakStack(temp.PeakValueStack, Peak);
+						Wave[i] = (int16_t)(ResampleData[i]);
+					}
+					UpdateTimeStack(temp.CycleTime, TempCycleTime);
+				}
+				else
+				{
+					float cor = ComputeSimilarity(ResampleData, WAVELEN, Wave);
 
-						int16_t end = Num - 1;
-						int16_t start = end - (temp.PeakLoc - temp.LastPeakLoc);
+					if (cor >= temp.SimiLimit)
+					{
+						UpdateTimeStack(temp.CycleTime, TempCycleTime);
+
 						int16_t Pnum = GetArrayMaxPLen(Acc.Data, start, end);
-						TempTime = (float)(Pnum / 25.0);
-						UpdateTimeStack(temp.PaddleTime, TempTime);
+						TempPaddleTime = (float)(Pnum / 25.0);
+						UpdateTimeStack(temp.PaddleTime, TempPaddleTime);
+						RowResult.avgPaddleTime = TempPaddleTime;
 
-						float ResampleData[WAVELEN];
-						SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
 						for (int16_t i = 0; i < WAVELEN; i++)
 						{
 							Wave[i] = (int16_t)(Wave[i] * temp.Count1 / (temp.Count1 + 1) + ResampleData[i] / (temp.Count1 + 1));
-						}
-
-						for (int16_t i = 0; i < 3; i++)
-						{
-							if (i >= 1)
-							{
-								RowResult.avgRowDuration = RowResult.avgRowDuration * temp.Count1 / (temp.Count1 + 1) + temp.CycleTime[i] / (temp.Count1 + 1);
-								RowResult.avgPaddleTime = RowResult.avgPaddleTime * temp.Count1 / (temp.Count1 + 1) + temp.PaddleTime[i] / (temp.Count1 + 1); //��ǰ���ε�ƽ��ֵ����������ʱ��
-								temp.Count1++;
-							}
-							RowResult.rowCounts++;
-							RowResult.avgRowCountPerMin = (int16_t)(60 / RowResult.avgRowDuration + 0.5);
-							RowResult.avgReturnPaddleTime = RowResult.avgRowDuration - RowResult.avgPaddleTime;
-						}
-						RowResult.avgRowCountPerMinNow = (int16_t)(60 / ((temp.CycleTime[1] + temp.CycleTime[2]) / 2) + 0.5); //��ǰ���ε�ƽ������ʾʵʱ��Ƶ
-
-						temp.LastPeakLoc = temp.PeakLoc;
-						temp.PeakLoc = 0;
-						temp.ValleyLoc = 0;
-
-						printf("%4.2f ", sample_num / 25.0);
-						printResult(RowResult);
-					}
-					else if (temp.IsolatedPointsNumber == 2)
-					{
-						if (RowResult.rowCounts == 0)
-						{
-							float ResampleData[WAVELEN];
-							int16_t end = Num - 1;
-							int16_t start = end - (temp.PeakLoc - temp.LastPeakLoc);
-							SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
-							for (int16_t i = 0; i < WAVELEN; i++)
-							{
-								Wave[i] = (int16_t)(ResampleData[i]);
-							}
-							TempTime = (float)(PPdis / 25.0);
-							UpdateTimeStack(temp.CycleTime, TempTime);
-							UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
-							UpdatePeakStack(temp.PeakValueStack, Peak);
-
-							temp.LastPeakLoc = temp.PeakLoc;
-							temp.PeakLoc = 0;
-							temp.ValleyLoc = 0;
-						}
-						else
-						{
-							int16_t end = Num - 1;
-							int16_t start = end - (temp.PeakLoc - temp.LastPeakLoc);
-							float cor;
-							float ResampleData[WAVELEN];
-							SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
-							cor = ComputeSimilarity(ResampleData, WAVELEN, Wave);
-
-							if (cor >= temp.SimiLimit)
-							{
-								TempTime = (float)(PPdis / 25.0);
-								UpdateTimeStack(temp.CycleTime, TempTime);
-
-								int16_t Pnum = GetArrayMaxPLen(Acc.Data, start, end);
-								TempTime = (float)(Pnum / 25.0);
-								UpdateTimeStack(temp.PaddleTime, TempTime);
-								RowResult.avgPaddleTime = TempTime;
-								float ResampleData[WAVELEN];
-								SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
-								for (int16_t i = 0; i < WAVELEN; i++)
-								{
-									Wave[i] = (int16_t)(Wave[i] * temp.Count1 / (temp.Count1 + 1) + ResampleData[i] / (temp.Count1 + 1));
-								}
-
-								UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
-								UpdatePeakStack(temp.PeakValueStack, Peak);
-
-								temp.LastPeakLoc = temp.PeakLoc;
-								temp.PeakLoc = 0;
-								temp.ValleyLoc = 0;
-							}
-							else
-							{
-								temp.IsolatedPointsNumber = 1;
-								UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
-								UpdatePeakStack(temp.PeakValueStack, Peak);
-
-								temp.LastPeakLoc = temp.PeakLoc;
-								temp.PeakLoc = 0;
-								temp.ValleyLoc = 0;
-							}
 						}
 					}
 					else
 					{
-						TempTime = (float)(PPdis / 25.0);
-						UpdateTimeStack(temp.CycleTime, TempTime);
-						UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
-						UpdatePeakStack(temp.PeakValueStack, Peak);
-						temp.LastPeakLoc = temp.PeakLoc;
-						temp.PeakLoc = 0;
-						temp.ValleyLoc = 0;
+						temp.IsolatedPointsNumber = 1;
 					}
 				}
-				else if (PPdis > temp.CycleLimit)
-				{
-					temp.IsolatedPointsNumber = 1;
-					UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
-					UpdatePeakStack(temp.PeakValueStack, Peak);
-					temp.LastPeakLoc = temp.PeakLoc;
-					temp.PeakLoc = 0;
-					temp.ValleyLoc = 0;
-					RowResult.avgRowCountPerMinNow = 0;
-				}
+			}
+			else
+			{
+				UpdateTimeStack(temp.CycleTime, TempCycleTime);
 			}
 		}
+		else if (PPdis > temp.CycleLimit)
+		{
+			temp.IsolatedPointsNumber = 1;
+			RowResult.avgRowCountPerMinNow = 0;
+		}
+
+		temp.LastPeakLoc = temp.PeakLoc;
+		temp.PeakLoc = 0;
+		temp.ValleyLoc = 0;
 	}
-	updateTrend(Num);
+	UpdateTrend(Num);
 	return;
 }
 
@@ -303,7 +246,7 @@ void UpdateMainDataStack()
 	for (int16_t i = 0; i < 5; i++)
 	{
 		int32_t w = 1;
-		weigh[i] = (float)((w << i) / 46.0); //w:left<iλ
+		weigh[i] = (float)((w << i) / 46.0); //w:left<i
 	}
 
 	for (int16_t i = 5; i < 9; i++)
@@ -382,7 +325,7 @@ void UpdatePeakStack(int16_t* Peak, int16_t Value)
 	Peak[2] = Value;
 	return;
 }
-void updateTrend(int32_t Num)
+void UpdateTrend(int32_t Num)
 {
 	if (temp.trend==-2)
 	{
@@ -398,7 +341,7 @@ void updateTrend(int32_t Num)
 //check
 int8_t checkValley(int32_t Num, int32_t sample_num)
 {
-	if (temp.trend == -1 && Acc.Data[Num] > Acc.Data[Num - 1](temp.LastPeakLoc == 0 || (sample_num - 1 - temp.LastPeakLoc >= 15)) && Acc.Data[Num - 1] <= -500 && temp.PeakLoc == 0)
+	if (Acc.Data[Num] > Acc.Data[Num - 1] && (temp.LastPeakLoc == 0 || (sample_num - 1 - temp.LastPeakLoc >= 8)) && Acc.Data[Num - 1] <= -500 && temp.PeakLoc == 0)
 	{
 		return 1;
 	}
@@ -409,7 +352,7 @@ int8_t checkValley(int32_t Num, int32_t sample_num)
 	
 }
 
-//get&print result or RealTimeData
+//Get & Print Result or RealTimeData
 void getRowingResult(RowResultStruct* result) {
 	*result = RowResult;
 }
@@ -436,7 +379,7 @@ void PrintRealTimeData(RealTimeData OnPoint)
 	printf(" \n");
 }
 
-//Operation Onx Array
+//Operation On Array
 int8_t sign(int16_t a)
 {
 	if (a == 0)
@@ -497,8 +440,8 @@ float ComputeVar2(int16_t* Array, int16_t length)
 	var /= length;
 	return var;
 }
-int16_t GetArrayMaxPLen(int16_t* Array, int16_t start, int16_t end)
-{
+int16_t GetArrayMaxPLen(int16_t* Array, int16_t start, int16_t end) //Count the number of positive values between two peaks
+{ 
 	int16_t Pnum = 0;
 	int16_t temp = 0;
 	for (int16_t i = start; i <= end; i++)
@@ -518,7 +461,7 @@ int16_t GetArrayMaxPLen(int16_t* Array, int16_t start, int16_t end)
 	}
 	return Pnum;
 }
-int16_t GetArrayMax(int16_t* Array, int16_t Num)
+int16_t GetArrayMax(int16_t* Array, int16_t Num) //Compute the max element of a Array
 {
 	if (Num <= 0)
 	{
@@ -535,7 +478,7 @@ int16_t GetArrayMax(int16_t* Array, int16_t Num)
 	}
 	return Maxelement;
 }
-int16_t GetArrayMean(int16_t* Array, int16_t len)
+int16_t GetArrayMean(int16_t* Array, int16_t len) //Compute Mean of a Float Array
 {
 	int16_t mean = 0;
 	for (int16_t i = 0; i < len; i++)
@@ -545,7 +488,7 @@ int16_t GetArrayMean(int16_t* Array, int16_t len)
 	mean /= len;
 	return mean;
 }
-float GetFloatArrayMean(float* Array, int16_t len) //�󸡵�������ľ�ֵ
+float GetFloatArrayMean(float* Array, int16_t len) //Compute the Mean of a Float Array
 {
 	float mean = 0;
 	for (int16_t i = 0; i < len; i++)
@@ -555,7 +498,7 @@ float GetFloatArrayMean(float* Array, int16_t len) //�󸡵�������
 	mean /= len;
 	return mean;
 }
-int16_t GetArrayMaxPosNumLen(int16_t* data, int16_t len)
+int16_t GetArrayMaxPosNumLen(int16_t* data, int16_t len)  //Compute Max Number of The length of Positive numbers  of a array
 {
 	int16_t pmax = 0;
 	int temp = 0;
