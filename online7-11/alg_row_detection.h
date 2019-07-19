@@ -1,8 +1,6 @@
 #ifndef ALG_ROW_DETECTION_H
 #define ALG_ROW_DETECTION_H
 
-#define WINDTH 100
-#define CYCLELIMIT 85
 #define MAX_LEN 100
 #define MAX_RS_LEN 100
 #define WAVELEN 50
@@ -13,20 +11,21 @@
 #include	<stdbool.h>
 #include    "alg_math.h"
 
+
 //RESULT
 typedef struct ResultStruct
 {
 	int32_t rowCounts;				//Row Number
 	float avgRowDuration; 			//Row Mean Time
-	float avgRowCountPerMin; 		//Average frequency in Long Time
-	float avgRowCountPerMinNow; 	//Average frequency in Last Minutes
+	int16_t avgRowCountPerMin; 		//Average frequency in Long Time
+	int16_t avgRowCountPerMinNow; 	//Average frequency in Last Minutes
 	float avgPaddleTime;			//Paddle Time of Last Row
 	float avgReturnPaddleTime;  	//ReturnPaddle Time of Last Row
 }RowResultStruct;
 
 typedef struct RowGroupInfo_t
 {
-	int32_t mCount;	
+	int32_t mCount;
 	int32_t mTime;
 	float mCalories;
 	int32_t mAvgHeartRate;
@@ -49,14 +48,14 @@ typedef struct RealTimeData
 //Data Stack :Save a certain number of points
 typedef struct RawDataStack
 {
-	RealTimeData Data[WINDTH];
+	RealTimeData* Data;
 	int16_t DataStackNum;
 }RawDataStack;
 
 //Information extracted from the original data after filtering
 typedef struct DataStack
 {
-	int16_t Data[WINDTH];
+	int16_t* Data;
 	int16_t DataNum;
 }DataStack;
 
@@ -97,7 +96,6 @@ void reset_group_info();
 
 //Get & Print Result or RealTimeData
 void getRowingResult(RowResultStruct* result);	//Get the data in real time
-void getRowingData(RowGroupData_t* group_data);
 void printResult(RowResultStruct Result); 		//Print result data
 void PrintRealTimeData(RealTimeData OnPoint); 	//Print the data in real time
 

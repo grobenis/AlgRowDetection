@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-//#include "RowDetection.h"
 #include "ReadCsv.h"
 #include "alg_row_detection.h"
 
@@ -17,17 +16,17 @@ int main()
 	//filename = "d:/rowing_pig&data/rowing/2019-04-09_12-15-58/sensor_gyr.csv"; //322
 	//filename = "d:/rowing_pig&data/rowing/2019-04-09_12-33-21/sensor_gyr.csv"; //286
 	//filename = "d:/rowing_pig&data/rowing/2019-04-09_12-33-38/sensor_gyr.csv"; //284
-	filename = "d:/rowing_pig&data/rowing/2019-07-02_12-15-43/sensor_gyr1.csv"; //* 349
+	//filename = "d:/rowing_pig&data/rowing/2019-07-02_12-15-43/sensor_gyr1.csv"; //* 349
 	//filename = "d:/rowing_pig&data/rowing/1058917799_2019-04-04_12-23-08/sensor_gyr.csv"; //* 237 fre = 30
 	//filename = "d:/rowing_pig&data/rowing/1058917799_2019-04-04_12-39-41/sensor_gyr.csv"; //319 fre = 29 
-	//filename = "d:/rowing_pig&data/rowing/1058917799_2019-04-08_12-38-47/sensor_gyr.csv"; //* 297´Î ×óÊÖ fre = 31
+	filename = "d:/rowing_pig&data/rowing/1058917799_2019-04-08_12-38-47/sensor_gyr.csv"; //* 297´Î ×óÊÖ fre = 31
 
 	//filename = "d:/rowing_pig&data/rowing/qogir/2019-05-08_12-10-04/sensor_gyr.csv"; //218
 	//filename = "d:/rowing_pig&data/rowing/qogir/2019-05-08_12-26-03/sensor_gyr.csv"; //197 
 	//filename = "d:/rowing_pig&data/rowing/qogir/2019-05-08_12-39-10/sensor_gyr.csv"; //239
 	//filename = "d:/rowing_pig&data/rowing/qogir/2019-05-08_13-20-17/sensor_gyr.csv"; //310
 	//filename = "d:/rowing_pig&data/rowing/qogir/2019-05-08_12-39-10/sensor_gyr.csv"; //251 --
-	//filename = "d:/rowing_pig&data/rowing/qogir/2019-05-08_13-32-50/sensor_gyr.csv"; //231 --
+	//filename = "d:/rowing_pig&data/rowing/qogir/2019-05-08_13-32-50/sensor_gyr.csv"; //231 -- **
 	//filename = "d:/rowing_pig&data/rowing/qogir/2019-05-08_13-44-48/sensor_gyr.csv"; //226 --
 	//filename = "d:/rowing_pig&data/rowing/qogir/2019-05-09_09-54-17/sensor_gyr.csv"; //238
 
@@ -49,10 +48,13 @@ int main()
 	//filename = "d:/rowing_pig&data/rowing/everest/2019-05-08_19-15-05/sensor_gyr.csv";
 	//filename = "d:/rowing_pig&data/rowing/everest/2019-05-09_09-54-14/sensor_gyr.csv";
 
-	//filename = "C:/Users/¹ù Ä/Desktop/sensor_log/3/sensor_gyr.csv"; //20
-	//filename = "C:\\Users\\¹ù Ä\\Desktop\\sensor_log\\5\\sensor_gyr.csv"; //
-	//filename = "C:\\Users\\¹ù Ä\\Desktop\\sensor_log\\7\\sensor_gyr.csv"; //20
-	filename = "C:\\Users\\¹ù Ä\\Desktop\\sensor_log\\7-3\\sensor_gyr.csv"; //20
+	//filename = "c:/users/¹ù Ä/desktop/sensor_log/3/sensor_gyr.csv"; //20
+	//filename = "c:\\users\\¹ù Ä\\desktop\\sensor_log\\5\\sensor_gyr.csv"; //
+	//filename = "c:\\users\\¹ù Ä\\desktop\\sensor_log\\7\\sensor_gyr.csv"; //20 ÊÜ·åÖµÓ°Ïì´ó
+	//filename = "C:\\Users\\¹ù Ä\\Desktop\\sensor_log\\7-3\\sensor_gyr.csv"; //20
+	//filename = "C:\\Users\\¹ù Ä\\Desktop\\sensor_log\\7-15-30-3\\11.txt"; //30
+	//filename = "C:\\Users\\¹ù Ä\\Desktop\\sensor_log\\video-13\\13.txt"; //*16 15
+	//filename = "C:\\Users\\¹ù Ä\\Desktop\\sensor_log\\14-20row\\20.txt";
 
 	extern int16_t sample_num;
 
@@ -87,9 +89,6 @@ int main()
 	printf("\nResult:\n");
 	printResult(RowResult);
 
-	extern float sum;
-	extern int16_t count;
-	printf("%.2f/%d=%.2f\n", sum, count, sum / count);
 	free(fp_src->Data);
 	free(fp_src);
 	return 0;

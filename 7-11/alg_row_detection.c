@@ -1,46 +1,48 @@
 #include "alg_row_detection.h"
+//#include "alg_debug.h"
+//#include "comm_log.h"
+
+//LOGI("ALGO", "row_result: %f,%f,%d,%d,%d\r\n", gRowOutInfo.avgPaddleTime, gRowOutInfo.avgReturnPaddleTime, gRowOutInfo.avgRowCountPerMin, gRowOutInfo.avgRowCountPerMinNow, gRowOutInfo.rowCounts);
+float weigh[9];
+float weigh2[9];
 
 int32_t sample_num;			//Sample Number
 int16_t Wave[WAVELEN];		//Wave Shape: For compute similarity
+float ResampleData[WAVELEN];
+
 TempStack temp;				//Tempdata
 RawDataStack RawData;		//On-time data stack
 RowResultStruct RowResult;	//Result 
 DataStack Acc;
 DataStack Ang;
 
+float sum;
+int count;
 //init parameter
 void row_initial(bool handside)
 {
-	//parameter:
-	//handside:	hadside==true:left hand .else right hand
-
+	//@parameter|handside:	hadside==true:left hand .else right hand
 	sample_num = 0;
 
 	temp.trend = -2;
 	temp.IsolatedPointsNumber = 0;
 	temp.Count1 = 0;
-	temp.CycleLimit = 65;
+	temp.CycleLimit = 75;
 	temp.SimiLimit = (float)(0.4);
-	temp.hand = (handside == true) ? 1 : -1;
+	temp.hand = (handside == true) ? -1 : 1;
 
 	temp.LastPeakLoc = 0;
 	temp.PeakLoc = 0;
 	temp.ValleyLoc = 0;
 	temp.LastValleyLoc = 0;
 
-	for (int16_t i = 0; i < 3; i++)
-	{
-		temp.CycleTime[i] = 0;
-		temp.PaddleTime[i] = 0;
-		temp.PeakValueStack[i] = 0;
-		temp.PeaksLocStack[i] = 0;
-	}
+	memset(temp.CycleTime, 0, sizeof(temp.CycleTime));
+	memset(temp.PaddleTime, 0, sizeof(temp.PaddleTime));
+	memset(temp.PeakValueStack,0, sizeof(temp.PeakValueStack));
+	memset(temp.PeaksLocStack,0, sizeof(temp.PeaksLocStack));
 
 	//init Wave Shape data
-	for (int16_t i = 0; i < WAVELEN; i++)
-	{
-		Wave[i] = 0;
-	}
+	memset(Wave, 0, sizeof(Wave));
 
 	//init data stack
 	temp.windth = 80;
@@ -59,21 +61,36 @@ void row_initial(bool handside)
 	RowResult.avgReturnPaddleTime = 0;
 	RowResult.avgRowCountPerMinNow = 0;
 
+	sum = 0;
+	count = 0;
+	//init weigh
+	for (int16_t i = 0; i < 9; i++)
+	{
+		int32_t w = 1;
+		if(i<5)
+			weigh[i] = (float)((w << i) / 46.0); //w:left<i
+		else
+			weigh[i] = (float)((w << (8 - i)) / 46.0);
+
+		weigh2[i] = (float)(1.0 / 9.0);
+	}
 	return;
 }
 void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 {
+	//@parameter
+	//acc_buf:	Acceleration sensor data
+	//gyro_buf: Angular velocity sensor data
 	sample_num = sample_num + 1;
 
 	// Update Real-Time Data
 	RealTimeData OnPoint = { {acc_buf[0],acc_buf[1],acc_buf[2]},{gyro_buf[0],gyro_buf[1],gyro_buf[2]} };
-	UpdateRawDataStack(OnPoint);  //Update raw Data
-	UpdateMainDataStack(); //Update Data (Filter) 
+	UpdateDataStack(OnPoint);
 
 	if (Acc.DataNum == 0) return;
-
 	int32_t Num = Acc.DataNum - 1;
-	float var = ComputeVar2(Acc.Data, Acc.DataNum); //Compute Var of Data
+
+	float var = ComputeVar(Acc.Data, Acc.DataNum); //Compute Var of Data
 	if (var > 300000 || var < 8000)
 	{
 		temp.IsolatedPointsNumber = 0;
@@ -86,7 +103,7 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 	if (temp.trend == -2)
 	{
 		RowResult.avgRowCountPerMinNow = 0;
-	}		
+	}
 	else if(temp.trend == -1) //Check if the point is a trough
 	{
 		if(checkValley(Num,sample_num))
@@ -99,10 +116,8 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 		float TempCycleTime = (float)(PPdis / 25.0);
 		float TempPaddleTime;
 
-		int16_t PeakThresold;	
-		PeakThresold = 500;
-		
-		//PeakThresold = (int16_t)(MAX(GetArrayMean(temp.PeakValueStack, 3) * exp(-PPdis / 80.0)*0.8, 500)); //setting PeakThresold
+		int16_t PeakThresold = (int16_t)(MAX(GetArrayMean(temp.PeakValueStack, 3) * exp(-PPdis / 80.0)*0.8, 1000)); //setting PeakThresold
+
 		if (Peak < PeakThresold || temp.ValleyLoc == 0 || sample_num - 1 - temp.ValleyLoc < 8)
 		{
 			UpdateTrend(Num);
@@ -110,38 +125,41 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 		}
 
 		temp.PeakLoc = sample_num - 1;
-		float ResampleData[WAVELEN];
 		int16_t end = Num - 1;
 		int16_t start = end - (temp.PeakLoc - temp.LastPeakLoc);
-
 		UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
 		UpdatePeakStack(temp.PeakValueStack, Peak);
 
 		if ((PPdis >= 20 && PPdis <= temp.CycleLimit) || temp.LastPeakLoc == 0)
 		{
 			temp.IsolatedPointsNumber++;
+			//printf("%.2f %d\n",sample_num/25.0, temp.IsolatedPointsNumber);
 			if (temp.IsolatedPointsNumber > 3)
 			{
 				UpdateTimeStack(temp.CycleTime, TempCycleTime);
 				RowResult.avgRowDuration = RowResult.avgRowDuration * temp.Count1 / (temp.Count1 + 1) + temp.CycleTime[2] / (temp.Count1 + 1);
 				
-				int16_t Pnum = GetArrayMaxPLen(Acc.Data, start, end);				
+				int16_t Pnum = GetArrayMaxPosNumLen(Ang.Data, start, end);
 				TempPaddleTime = (float)(Pnum / 25.0);
 				UpdateTimeStack(temp.PaddleTime, TempPaddleTime);
-				RowResult.avgPaddleTime = TempPaddleTime; //use the last temptime to compute paddletime
+				
+				sum = sum + TempPaddleTime;
+				count++;
 
 				SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
-				for (int16_t i = 0; i < WAVELEN; i++)
+				for (int16_t i = 0; i < WAVELEN; i++ )
 				{
 					Wave[i] = (int16_t)(Wave[i] * temp.Count1 / (temp.Count1 + 1) + ResampleData[i] / (temp.Count1 + 1));
 				}
 
 				temp.Count1++;
 				RowResult.rowCounts++;
+				RowResult.avgPaddleTime = GetFloatArrayMean(temp.PaddleTime, 3); //RowResult.avgPaddleTime = TempPaddleTime; //use the last temptime to compute paddletime
 				RowResult.avgRowCountPerMin = (int16_t)(60 / RowResult.avgRowDuration + 0.5); //Final mean Freq
 				RowResult.avgRowCountPerMinNow = (int16_t)(60 / TempCycleTime + 0.5); // now On-Time Freq
 				RowResult.avgReturnPaddleTime = TempCycleTime - RowResult.avgPaddleTime; // The last return Paddle-Time
 
+				//LOGI("ALGO", "row_result: %f,%f,%d,%d,%d\r\n", gRowOutInfo.avgPaddleTime, gRowOutInfo.avgReturnPaddleTime, gRowOutInfo.avgRowCountPerMin, gRowOutInfo.avgRowCountPerMinNow, gRowOutInfo.rowCounts);
 				printf("%4.2f ", sample_num / 25.0);
 				printResult(RowResult);
 			}
@@ -149,38 +167,47 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 			{
 				UpdateTimeStack(temp.CycleTime, TempCycleTime);
 
-				int16_t Pnum = GetArrayMaxPLen(Acc.Data, start, end);
+				int16_t Pnum = GetArrayMaxPosNumLen(Ang.Data, start, end);
 				TempPaddleTime = (float)(Pnum / 25.0);
 				UpdateTimeStack(temp.PaddleTime, TempPaddleTime);
+
+				sum += temp.PaddleTime[1] + temp.PaddleTime[2];
+				count += 2;
 
 				SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
 				for (int16_t i = 0; i < WAVELEN; i++)
 				{
 					Wave[i] = (int16_t)(Wave[i] * temp.Count1 / (temp.Count1 + 1) + ResampleData[i] / (temp.Count1 + 1));
 				}
+
 				for (int16_t i = 0; i < 3; i++)
 				{
 					if (i >= 1)
 					{
 						RowResult.avgRowDuration = RowResult.avgRowDuration * temp.Count1 / (temp.Count1 + 1) + temp.CycleTime[i] / (temp.Count1 + 1);
-						RowResult.avgPaddleTime = RowResult.avgPaddleTime * temp.Count1 / (temp.Count1 + 1) + temp.PaddleTime[i] / (temp.Count1 + 1);
 						temp.Count1++;
 					}
 					RowResult.rowCounts++;
 					RowResult.avgRowCountPerMin = (int16_t)(60 / RowResult.avgRowDuration + 0.5);
+					RowResult.avgPaddleTime = (float)((temp.PaddleTime[1]+temp.PaddleTime[2])/2.0);
 					RowResult.avgReturnPaddleTime = RowResult.avgRowDuration - RowResult.avgPaddleTime;
 				}
 				RowResult.avgRowCountPerMinNow = (int16_t)(60 / ((temp.CycleTime[1] + temp.CycleTime[2]) / 2) + 0.5);
 
+				//LOGI("ALGO", "row_result: %f,%f,%d,%d,%d\r\n", gRowOutInfo.avgPaddleTime, gRowOutInfo.avgReturnPaddleTime, gRowOutInfo.avgRowCountPerMin, gRowOutInfo.avgRowCountPerMinNow, gRowOutInfo.rowCounts);
 				printf("%4.2f ", sample_num / 25.0);
 				printResult(RowResult);
 			}
 			else if (temp.IsolatedPointsNumber == 2)
 			{
 				SeqResample(&Acc.Data[start], end - start + 1, WAVELEN, ResampleData);
-
 				if (RowResult.rowCounts == 0)
 				{
+					int16_t Pnum = GetArrayMaxPosNumLen(Ang.Data, start, end);
+					TempPaddleTime = (float)(Pnum / 25.0);
+					UpdateTimeStack(temp.PaddleTime, TempPaddleTime);
+					RowResult.avgPaddleTime = TempPaddleTime;
+
 					for (int16_t i = 0; i < WAVELEN; i++)
 					{
 						Wave[i] = (int16_t)(ResampleData[i]);
@@ -190,12 +217,11 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 				else
 				{
 					float cor = ComputeSimilarity(ResampleData, WAVELEN, Wave);
-
 					if (cor >= temp.SimiLimit)
 					{
 						UpdateTimeStack(temp.CycleTime, TempCycleTime);
 
-						int16_t Pnum = GetArrayMaxPLen(Acc.Data, start, end);
+						int16_t Pnum = GetArrayMaxPosNumLen(Ang.Data, start, end);
 						TempPaddleTime = (float)(Pnum / 25.0);
 						UpdateTimeStack(temp.PaddleTime, TempPaddleTime);
 						RowResult.avgPaddleTime = TempPaddleTime;
@@ -226,11 +252,32 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 		temp.PeakLoc = 0;
 		temp.ValleyLoc = 0;
 	}
+
 	UpdateTrend(Num);
 	return;
 }
 
 //Update DataStack in every round
+void UpdateDataStack(RealTimeData OnPoint)
+{
+	//Update RawData 
+	if (RawData.DataStackNum < temp.windth)
+	{
+		RawData.Data[RawData.DataStackNum] = OnPoint;
+		RawData.DataStackNum++;
+	}
+	else if (RawData.DataStackNum == temp.windth)
+	{
+		for (int i = 1; i < RawData.DataStackNum; i++)
+		{
+			RawData.Data[i - 1] = RawData.Data[i];
+		}
+		RawData.Data[RawData.DataStackNum - 1] = OnPoint;
+	}
+
+	//Update Data (Filter) 
+	UpdateMainDataStack(); 
+}
 void UpdateMainDataStack()
 {
 	int16_t AccNum = 0;
@@ -240,32 +287,17 @@ void UpdateMainDataStack()
 	{
 		return;
 	}
-
-	float weigh[9];
-
-	for (int16_t i = 0; i < 5; i++)
-	{
-		int32_t w = 1;
-		weigh[i] = (float)((w << i) / 46.0); //w:left<i
-	}
-
-	for (int16_t i = 5; i < 9; i++)
-	{
-		int32_t w = 1;
-		weigh[i] = (float)((w << (8-i)) / 46.0);
-	}
-
 	if (4 <= RawData.DataStackNum && RawData.DataStackNum < 9)
 	{
-		AccNum = RawData.Data[RawData.DataStackNum - 1].acc[0];
+		AccNum = RawData.Data[RawData.DataStackNum - 1].acc[0] * temp.hand;
 		AngNum = RawData.Data[RawData.DataStackNum - 1].ang[1] * temp.hand;
 	}
 	else
 	{
 		for (int16_t i = 0; i < 9; i++)
 		{
-			AccNum += (int16_t)(RawData.Data[RawData.DataStackNum - (9 - i)].acc[0] * weigh[i]);
-			AngNum += (int16_t)(RawData.Data[RawData.DataStackNum - (9 - i)].ang[1] * weigh[i]);
+			AccNum += (int16_t)(RawData.Data[RawData.DataStackNum - (9 - i)].acc[0] * weigh[i] * temp.hand);
+			AngNum += (int16_t)(RawData.Data[RawData.DataStackNum - (9 - i)].ang[1] * weigh[i] * temp.hand);
 		}
 	}
 
@@ -284,28 +316,6 @@ void UpdateMainDataStack()
 		Acc.Data[Acc.DataNum - 1] = AccNum;
 		Ang.Data[Ang.DataNum - 1] = AngNum;
 	}
-}
-void UpdateRawDataStack(RealTimeData OnPoint)
-{
-	if (RawData.DataStackNum < temp.windth)
-	{
-		RawData.Data[RawData.DataStackNum] = OnPoint;
-		RawData.DataStackNum++;
-	}
-	else if (RawData.DataStackNum == temp.windth)
-	{
-		for (int i = 1; i < RawData.DataStackNum; i++)
-		{
-			RawData.Data[i - 1] = RawData.Data[i];
-		}
-		RawData.Data[RawData.DataStackNum - 1] = OnPoint;
-	}
-	else
-	{
-		//		printf("A error ourred! num > temp.windth\n");
-		//		exit(0);
-	}
-	return;
 }
 void UpdateTimeStack(float* Time, float Value)
 {
@@ -338,7 +348,7 @@ void UpdateTrend(int32_t Num)
 	return;
 }
 
-//check
+//Check
 int8_t checkValley(int32_t Num, int32_t sample_num)
 {
 	if (Acc.Data[Num] > Acc.Data[Num - 1] && (temp.LastPeakLoc == 0 || (sample_num - 1 - temp.LastPeakLoc >= 8)) && Acc.Data[Num - 1] <= -500 && temp.PeakLoc == 0)
@@ -418,49 +428,6 @@ float ComputeVar(int16_t* Array, int16_t length)
 	var /= length - 1;
 	return var;
 }
-float ComputeVar2(int16_t* Array, int16_t length)
-{
-	if (length <= 0)
-		return 0;
-
-	float mean = 0;
-	float var;
-	float sum = 0;
-
-	for (int i = 0; i < length; i++)
-	{
-		mean = Array[i];
-	}
-	mean/= length;
-	for (int i = 0; i < length; i++)
-	{
-		sum += (Array[i]-mean)* (Array[i] - mean);
-	}
-	var = sum/length;
-	var /= length;
-	return var;
-}
-int16_t GetArrayMaxPLen(int16_t* Array, int16_t start, int16_t end) //Count the number of positive values between two peaks
-{ 
-	int16_t Pnum = 0;
-	int16_t temp = 0;
-	for (int16_t i = start; i <= end; i++)
-	{
-		if (Array[i] > 0)
-		{
-			temp++;
-		}
-		else
-		{
-			if (temp > Pnum)
-			{
-				Pnum = temp;
-			}
-			temp = 0;
-		}
-	}
-	return Pnum;
-}
 int16_t GetArrayMax(int16_t* Array, int16_t Num) //Compute the max element of a Array
 {
 	if (Num <= 0)
@@ -498,35 +465,32 @@ float GetFloatArrayMean(float* Array, int16_t len) //Compute the Mean of a Float
 	mean /= len;
 	return mean;
 }
-int16_t GetArrayMaxPosNumLen(int16_t* data, int16_t len)  //Compute Max Number of The length of Positive numbers  of a array
+int16_t GetArrayMaxPosNumLen(int16_t* Array, int16_t start, int16_t end) //Count the number of positive values between two peaks
 {
-	int16_t pmax = 0;
-	int temp = 0;
-	for (int16_t i = 0; i < len; i++)
+	int16_t Pnum = 0;
+	int16_t temp = 0;
+	for (int16_t i = start; i <= end; i++)
 	{
-		if (data[i] > 0)
+		if (Array[i] > 0)
 		{
 			temp++;
 		}
 		else
 		{
-			if (temp > pmax)
+			if (temp > Pnum)
 			{
-				pmax = temp;
-				temp = 0;
+				Pnum = temp;
 			}
+			temp = 0;
 		}
 	}
-
-	if (temp > pmax)
+	if (temp > Pnum)
 	{
-		pmax = temp;
-		temp = 0;
+		Pnum = temp;
 	}
-	return pmax;
+	return Pnum;
 }
 
-//Compute Similarity
 float ComputeSimilarity(float* Array, int Num1, int16_t* Wave)
 {
 	float mean1 = 0;

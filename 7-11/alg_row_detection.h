@@ -1,8 +1,6 @@
 #ifndef ALG_ROW_DETECTION_H
 #define ALG_ROW_DETECTION_H
 
-#define WINDTH 100
-#define CYCLELIMIT 85
 #define MAX_LEN 100
 #define MAX_RS_LEN 100
 #define WAVELEN 50
@@ -13,31 +11,25 @@
 #include	<stdbool.h>
 #include    "alg_math.h"
 
+
 //RESULT
 typedef struct ResultStruct
 {
-	int32_t rowCounts;				//Row Number
-	float avgRowDuration; 			//Row Mean Time
-	float avgRowCountPerMin; 		//Average frequency in Long Time
-	float avgRowCountPerMinNow; 	//Average frequency in Last Minutes
-	float avgPaddleTime;			//Paddle Time of Last Row
-	float avgReturnPaddleTime;  	//ReturnPaddle Time of Last Row
+	int32_t rowCounts;	//划次
+	float avgRowDuration; //平均时间
+	int16_t avgRowCountPerMin; //分均划频 :: 最后展示
+	int16_t avgRowCountPerMinNow; //实时划频 :: 当前展示
+	float avgPaddleTime;	//拉桨时间
+	float avgReturnPaddleTime;  //回桨时间
 }RowResultStruct;
-
 typedef struct RowGroupInfo_t
 {
-	int32_t mCount;	
-	int32_t mTime;
+	int32_t mCount;	//Row Number
+	int32_t mTime; //Time
 	float mCalories;
 	int32_t mAvgHeartRate;
 	float mAvgCadence;
 }RowGroupInfo_t;
-
-typedef struct RowGroupData_t
-{
-	int32_t mPeakInteralSum;		//Interal Number in Last Group
-	float mPeakInteralTimeSum;	//the Sum of Interal in Last Group
-}RowGroupData_t;
 
 //Real-Time Data:Used as the input of program
 typedef struct RealTimeData
@@ -49,16 +41,14 @@ typedef struct RealTimeData
 //Data Stack :Save a certain number of points
 typedef struct RawDataStack
 {
-	RealTimeData Data[WINDTH];
+	RealTimeData* Data;
 	int16_t DataStackNum;
 }RawDataStack;
-
-//Information extracted from the original data after filtering
 typedef struct DataStack
 {
-	int16_t Data[WINDTH];
+	int16_t* Data;
 	int16_t DataNum;
-}DataStack;
+}DataStack; //Information extracted from the original data after filtering
 
 //Intermediate variables
 typedef struct TempStack
@@ -89,26 +79,26 @@ void row_initial(bool handside); //Initialization parameters
 void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf); //Real-time detection
 
 //Update Data in every round.
-void UpdateRawDataStack(RealTimeData OnPoint);
+void UpdateDataStack(RealTimeData OnPoint);
 void UpdateMainDataStack();
 void UpdateTimeStack(float* CycleTime, float Value);
 void UpdatePeakStack(int16_t* Peak, int16_t Value);
-void reset_group_info();
+void UpdateTrend(int32_t Num); //update the trend of wave in every round
+
+int8_t checkValley(int32_t Num, int32_t sample_num); //check if the current point is a valley\trough
 
 //Get & Print Result or RealTimeData
 void getRowingResult(RowResultStruct* result);	//Get the data in real time
-void getRowingData(RowGroupData_t* group_data);
-void printResult(RowResultStruct Result); 		//Print result data
-void PrintRealTimeData(RealTimeData OnPoint); 	//Print the data in real time
+void printResult(RowResultStruct Result); //Print result data
+void PrintRealTimeData(RealTimeData OnPoint); //Print the data in real time
 
 //Operation On Array
 int8_t sign(int16_t a);//Judging the sign of the value
-float ComputeVar(int16_t* Array, int16_t length); 
-int16_t GetArrayMaxPLen(int16_t* Array, int16_t start, int16_t end);
-int16_t GetArrayMax(int16_t* Array, int16_t Num); 
-int16_t GetArrayMean(int16_t* Array, int16_t len); 
-float GetFloatArrayMean(float* Array, int16_t len); 
-int16_t GetArrayMaxPosNumLen(int16_t* Array, int16_t len);
+float ComputeVar(int16_t* Array, int16_t length); //Calculate the variance of an array
+int16_t GetArrayMax(int16_t* Array, int16_t Num); //Compute the Max Element of a Array
+int16_t GetArrayMean(int16_t* Array, int16_t len); //Compute Mean of a Array
+float GetFloatArrayMean(float* Array, int16_t len); //Compute the Mean of a Float Array
+int16_t GetArrayMaxPosNumLen(int16_t* Array, int16_t start, int16_t end); //Count the number of positive values between two peaks
 
 //Compute Similarity
 float ComputeSimilarity(float* Array, int Num1, int16_t* Wave); //Compute the similarity of two signal

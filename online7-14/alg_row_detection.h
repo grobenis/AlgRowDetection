@@ -1,8 +1,8 @@
 #ifndef ALG_ROW_DETECTION_H
 #define ALG_ROW_DETECTION_H
 
-#define WINDTH 100
-#define CYCLELIMIT 85
+#define WINDTH 120
+#define CYCLELIMIT 100
 #define MAX_LEN 100
 #define MAX_RS_LEN 100
 #define WAVELEN 50
@@ -97,7 +97,6 @@ void reset_group_info();
 
 //Get & Print Result or RealTimeData
 void getRowingResult(RowResultStruct* result);	//Get the data in real time
-void getRowingData(RowGroupData_t* group_data);
 void printResult(RowResultStruct Result); 		//Print result data
 void PrintRealTimeData(RealTimeData OnPoint); 	//Print the data in real time
 

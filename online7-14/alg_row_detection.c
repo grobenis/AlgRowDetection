@@ -1,15 +1,19 @@
 #include "alg_row_detection.h"
+//#include "alg_debug.h"
+//#include "comm_log.h"
 
 int32_t sample_num;			//Sample Number
-int16_t Wave[WAVELEN];		//Wave Shape £∫For compute similarity
+int16_t Wave[WAVELEN];		//Wave Shape: For compute similarity
 TempStack temp;				//Tempdata
 RawDataStack RawData;		//On-time data stack
-RowResultStruct RowResult;	//Result 
+RowResultStruct RowResult;	//Result
+RowGroupData_t RowGroupData; //Row Data in Last Group
 DataStack Acc;
 DataStack Ang;
-
+int8_t cnt=0;
 //init parameter 
 //handside==1 left hand else right hand
+
 void row_initial(bool handside)
 {
 	sample_num = 0;
@@ -17,22 +21,19 @@ void row_initial(bool handside)
 	temp.trend = -2;
 	temp.IsolatedPointsNumber = 0;
 	temp.Count1 = 0;
-	temp.CycleLimit = 75;
+	temp.CycleLimit = CYCLELIMIT;
 	temp.SimiLimit = (float)(0.4);
-	temp.hand = (handside == true) ? 1 : -1;
+	temp.hand = (handside == 1) ? 1 : -1;
 
 	temp.LastPeakLoc = 0;
 	temp.PeakLoc = 0;
 	temp.ValleyLoc = 0;
 	temp.LastValleyLoc = 0;
 
-	for (int16_t i = 0; i < 3; i++)
-	{
-		temp.CycleTime[i] = 0;
-		temp.PaddleTime[i] = 0;
-		temp.PeakValueStack[i] = 0;
-		temp.PeaksLocStack[i] = 0;
-	}
+	memset(temp.CycleTime, 0, sizeof(temp.CycleTime));
+	memset(temp.PaddleTime, 0, sizeof(temp.PaddleTime));
+	memset(temp.PeakValueStack, 0, sizeof(temp.PeakValueStack));
+	memset(temp.PeaksLocStack, 0, sizeof(temp.PeaksLocStack));
 
 	//init Wave Shape data
 	for (int16_t i = 0; i < WAVELEN; i++)
@@ -41,13 +42,10 @@ void row_initial(bool handside)
 	}
 
 	//init data stack
-	temp.windth = 80;
+	temp.windth = 100;
 	RawData.DataStackNum = 0;
-	RawData.Data = (RealTimeData*)malloc(sizeof(RealTimeData) * temp.windth);
 	Acc.DataNum = 0;
-	Acc.Data = (int16_t*)malloc(sizeof(int) * temp.windth);
 	Ang.DataNum = 0;
-	Ang.Data = (int16_t*)malloc(sizeof(int) * temp.windth);
 
 	//init result
 	RowResult.rowCounts = 0;
@@ -57,13 +55,20 @@ void row_initial(bool handside)
 	RowResult.avgReturnPaddleTime = 0;
 	RowResult.avgRowCountPerMinNow = 0;
 
+	reset_group_info();
 	return;
 }
 void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 {
+	cnt++;
 	RealTimeData OnPoint = { {acc_buf[0],acc_buf[1],acc_buf[2]},{gyro_buf[0],gyro_buf[1],gyro_buf[2]} };
 	sample_num = sample_num + 1;
-
+	printf("%d %d %.2f %.2f\n",sample_num,RowResult.rowCounts,RowResult.avgRowCountPerMinNow,RowResult.avgRowCountPerMin);
+//	if(cnt%5 == 0)
+//	{
+//LOGI("ALGO", "row_data:s %d,%d,%d,%d,%d,%d\r\n",acc_buf[0],acc_buf[1],acc_buf[2],gyro_buf[0],gyro_buf[1],gyro_buf[2]);
+//		cnt = 0;
+//	}
 	UpdateRawDataStack(OnPoint);  //Update raw Data
 	UpdateMainDataStack();
 
@@ -73,10 +78,23 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 	}
 
 	int32_t Num = Acc.DataNum - 1;
-	float var = ComputeVar2(Acc.Data, Acc.DataNum); //Compute Similarity
-	//printf("%.2f\n", var);
-	if (var >= 300000 || var <= 8000)
+	float var = ComputeVar(Acc.Data, Acc.DataNum); //Compute Similarity
+	//	if(cnt%5 == 0)
+	//{	
+	//LOGI("ALGO", "var: %f,%d,%d,%d\r\n",var,Acc.DataNum,Num,gyro_buf[1]);
+	//	LOGI("ALGO", "RowResult_in: %f,%d,%d,%d,%d\r\n",RowResult.avgPaddleTime,temp.trend,RowResult.rowCounts,RowResult.avgRowCountPerMinNow,temp.hand);
+	//
+	//			cnt = 0;
+	//}
+	
+	if (var >= 400000 || var <= 8000)
 	{
+		if (RowGroupData.mPeakInteralSum)
+		{
+			printf("row,%d\n", RowGroupData.mPeakInteralSum);
+			reset_group_info();
+		}
+		
 		temp.IsolatedPointsNumber = 0;
 		temp.PeakLoc = 0;
 	}
@@ -97,23 +115,15 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 			int16_t PPdis = sample_num - 1 - temp.LastPeakLoc; //Peak_Peak distance
 			int16_t PeakThresold;
 
-			//if (temp.trend == -2)
-			//{
-			//	PeakThresold = 1000;
-			//}
-			//else
-			//{
-			//	PeakThresold = (int16_t)(MAX(GetArrayMean(temp.PeakValueStack, 3) * (float)exp(-PPdis / 80), 1000));
-			//}
+			PeakThresold = 1000;
+			//PeakThresold = (int16_t)(MAX(GetArrayMean(temp.PeakValueStack, 3) * (float)exp(-PPdis / 80)*0.8, 1000));
 
-			PeakThresold = 500;
 			if (Peak >= PeakThresold && temp.ValleyLoc != 0)
 			{
 				float TempTime;
 				if (sample_num - 1 - temp.ValleyLoc >= 5)
 				{
-					printf("PEAK == %d\n", Peak);
-					
+					temp.PeakLoc = sample_num - 1;
 					if ((PPdis >= 20 && PPdis <= temp.CycleLimit) || temp.LastPeakLoc == 0)
 					{
 						temp.IsolatedPointsNumber++;
@@ -142,17 +152,18 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 							}
 
 							temp.Count1++;
+							RowGroupData.mPeakInteralSum ++;
+							RowGroupData.mPeakInteralTimeSum += temp.CycleTime[2];
 
 							RowResult.rowCounts++;
-							RowResult.avgRowCountPerMin = (int16_t)(60 / RowResult.avgRowDuration + 0.5); //Final mean Freq
-							RowResult.avgRowCountPerMinNow = (int16_t)(60 / (float)(PPdis / 25.0) + 0.5); // now On-Time Freq
+							RowResult.avgRowCountPerMin = 60 / RowResult.avgRowDuration; //Final mean Freq
+							RowResult.avgRowCountPerMinNow = 60*25.0/(float)(PPdis); // now On-Time Freq
 							RowResult.avgReturnPaddleTime = (float)(PPdis / 25.0) - RowResult.avgPaddleTime; // The last return Paddle-Time
 
 							temp.LastPeakLoc = temp.PeakLoc;
 							temp.PeakLoc = 0;
 							temp.ValleyLoc = 0;
 
-							printf("%4.2f ", sample_num / 25.0);
 							printResult(RowResult);
 						}
 						else if (temp.IsolatedPointsNumber == 3)
@@ -180,20 +191,21 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 								if (i >= 1)
 								{
 									RowResult.avgRowDuration = RowResult.avgRowDuration * temp.Count1 / (temp.Count1 + 1) + temp.CycleTime[i] / (temp.Count1 + 1);
-									RowResult.avgPaddleTime = RowResult.avgPaddleTime * temp.Count1 / (temp.Count1 + 1) + temp.PaddleTime[i] / (temp.Count1 + 1); //”√«∞¡Ω¥Œµƒ∆Ωæ˘÷µ¿¥º∆À„¿≠Ω∞ ±º‰
+									RowResult.avgPaddleTime = RowResult.avgPaddleTime * temp.Count1 / (temp.Count1 + 1) + temp.PaddleTime[i] / (temp.Count1 + 1); //Áî®Ââç‰∏§Ê¨°ÁöÑÂπ≥ÂùáÂÄºÊù•ËÆ°ÁÆóÊãâÊ°®Êó∂Èó¥
 									temp.Count1++;
+									RowGroupData.mPeakInteralSum ++;
+									RowGroupData.mPeakInteralTimeSum += temp.CycleTime[i];
 								}
 								RowResult.rowCounts++;
-								RowResult.avgRowCountPerMin = (int16_t)(60 / RowResult.avgRowDuration + 0.5);
+								RowResult.avgRowCountPerMin = 60 / RowResult.avgRowDuration + 0.5;
 								RowResult.avgReturnPaddleTime = RowResult.avgRowDuration - RowResult.avgPaddleTime;
 							}
-							RowResult.avgRowCountPerMinNow = (int16_t)(60 / ((temp.CycleTime[1] + temp.CycleTime[2]) / 2) + 0.5); //”√«∞»˝¥Œµƒ∆Ωæ˘¿¥±Ì æ µ ±ªÆ∆µ
+							RowResult.avgRowCountPerMinNow = 60 / ((temp.CycleTime[1] + temp.CycleTime[2]) / 2); //Áî®Ââç‰∏âÊ¨°ÁöÑÂπ≥ÂùáÊù•Ë°®Á§∫ÂÆûÊó∂ÂàíÈ¢ë
 
 							temp.LastPeakLoc = temp.PeakLoc;
 							temp.PeakLoc = 0;
 							temp.ValleyLoc = 0;
 
-							printf("%4.2f ", sample_num / 25.0);
 							printResult(RowResult);
 						}
 						else if (temp.IsolatedPointsNumber == 2)
@@ -267,7 +279,6 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 							UpdateTimeStack(temp.CycleTime, TempTime);
 							UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
 							UpdatePeakStack(temp.PeakValueStack, Peak);
-
 							temp.LastPeakLoc = temp.PeakLoc;
 							temp.PeakLoc = 0;
 							temp.ValleyLoc = 0;
@@ -278,7 +289,6 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 						temp.IsolatedPointsNumber = 1;
 						UpdatePeakStack(temp.PeaksLocStack, temp.PeakLoc);
 						UpdatePeakStack(temp.PeakValueStack, Peak);
-
 						temp.LastPeakLoc = temp.PeakLoc;
 						temp.PeakLoc = 0;
 						temp.ValleyLoc = 0;
@@ -288,12 +298,13 @@ void rowing_receiveAccGyro(int16_t* acc_buf, int16_t* gyro_buf)
 			}
 		}
 	}
-	
+
 	if (temp.trend == -2)
 		temp.trend = 0;
 	else
 		temp.trend = sign(Acc.Data[Num] - Acc.Data[Num - 1]);
 
+	//LOGI("ALGO", "RowResult_out: %f,%d,%d,%d\r\n",RowResult.avgPaddleTime,temp.trend,RowResult.rowCounts,RowResult.avgRowCountPerMinNow);
 	return;
 }
 
@@ -313,7 +324,7 @@ void UpdateMainDataStack()
 	for (int16_t i = 0; i < 5; i++)
 	{
 		int32_t w = 1;
-		weigh[i] = (float)((w << i) / 46.0); //w:left<iŒª
+		weigh[i] = (float)((w << i) / 46.0); //w:left<i‰Ωç
 	}
 
 	for (int16_t i = 5; i < 9; i++)
@@ -392,6 +403,11 @@ void UpdatePeakStack(int16_t* Peak, int16_t Value)
 	Peak[2] = Value;
 	return;
 }
+void reset_group_info()
+{
+	RowGroupData.mPeakInteralSum = 0;
+	RowGroupData.mPeakInteralTimeSum = 0;
+}
 
 //get&print result or RealTimeData
 void getRowingResult(RowResultStruct* result) {
@@ -401,8 +417,8 @@ void printResult(RowResultStruct RowResult)
 {
 	printf("rowCounts = %d\t", RowResult.rowCounts);
 	printf("avgRowDuration = %.2f\t", RowResult.avgRowDuration);
-	printf("fre_mean = %d\t", RowResult.avgRowCountPerMin);
-	printf("fre_now = %d\t", RowResult.avgRowCountPerMinNow);
+	printf("fre_mean = %.2f\t", RowResult.avgRowCountPerMin);
+	printf("fre_now = %.2f\t", RowResult.avgRowCountPerMinNow);
 	printf("avgPaddleTime= %.2f\t", RowResult.avgPaddleTime);
 	printf("avgReturnPaddleTime = %.2f\t", RowResult.avgReturnPaddleTime);
 	printf("\n");
@@ -459,28 +475,6 @@ float ComputeVar(int16_t* Array, int16_t length)
 	var /= length - 1;
 	return var;
 }
-float ComputeVar2(int16_t* Array, int16_t length)
-{
-	if (length <= 0)
-		return 0;
-
-	float mean = 0;
-	float var;
-	float sum = 0;
-
-	for (int i = 0; i < length; i++)
-	{
-		mean = Array[i];
-	}
-	mean/= length;
-	for (int i = 0; i < length; i++)
-	{
-		sum += (Array[i]-mean)* (Array[i] - mean);
-	}
-	var = sum/length;
-	var /= length;
-	return var;
-}
 int16_t GetArrayMaxPLen(int16_t* Array, int16_t start, int16_t end)
 {
 	int16_t Pnum = 0;
@@ -506,7 +500,7 @@ int16_t GetArrayMax(int16_t* Array, int16_t Num)
 {
 	if (Num <= 0)
 	{
-		printf("A error has ocured: The array Nedded to be computed Num <= 0\n");
+//		printf("A error has ocured: The array Nedded to be computed Num <= 0\n");
 		return -9999;
 	}
 	int16_t Maxelement = -1000;
@@ -529,7 +523,7 @@ int16_t GetArrayMean(int16_t* Array, int16_t len)
 	mean /= len;
 	return mean;
 }
-float GetFloatArrayMean(float* Array, int16_t len) //«Û∏°µ„–Õ ˝◊Èµƒæ˘÷µ
+float GetFloatArrayMean(float* Array, int16_t len) //Ê±ÇÊµÆÁÇπÂûãÊï∞ÁªÑÁöÑÂùáÂÄº
 {
 	float mean = 0;
 	for (int16_t i = 0; i < len; i++)
